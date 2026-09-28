@@ -5,6 +5,13 @@
 
 ![позиции](docs/positions.png)
 
+Ещё несколько карт (картинки сделаны `tools/preview.py` из файлов клиента):
+
+| | |
+|---|---|
+| ![Прохоровка, ТТ](docs/maps/05_prohorovka_team1_heavyTank.jpg) | ![Рудники, СТ](docs/maps/10_hills_team2_mediumTank.jpg) |
+| ![Степи, СТ](docs/maps/35_steppes_team1_mediumTank.jpg) | ![Эль-Халлуф, ТТ](docs/maps/29_el_hallouf_team2_heavyTank.jpg) |
+
 ## Откуда позиции
 
 Позиции не придуманы: мод берёт официальную разметку из режима «Топография»
