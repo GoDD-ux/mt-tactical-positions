@@ -1,0 +1,6 @@
+dist/
+docs/preview/
+__pycache__/
+*.pyc
+.idea/
+.vscode/
