@@ -7,8 +7,9 @@ import ResMgr
 from gui.Scaleform.daapi.view.battle.shared.minimap import settings
 from gui.Scaleform.daapi.view.battle.shared.minimap.common import EntriesPlugin
 from gui.Scaleform.daapi.view.battle.shared.minimap.component import MinimapComponent
-from gui.battle_control import minimap_utils
+from gui.battle_control import avatar_getter, minimap_utils
 from helpers import i18n
+from items.vehicles import getVehicleClassFromVehicleType
 from messenger import MessengerEntry
 
 from .tactics import TacticsIndex, clean_description, parse_maps, to_world
@@ -23,6 +24,8 @@ CONTAINER = settings.CONTAINER_NAME.EQUIPMENTS
 MARKER_SCALE = 0.8
 # чат боя переключается на боевой контекст чуть позже миникарты
 CHAT_DELAY = 3.0
+RETRY_DELAY = 1.0
+RETRY_ATTEMPTS = 30
 
 _index = None
 
@@ -66,21 +69,49 @@ def _text(geometry, key):
 
 class TacticalPositionsPlugin(EntriesPlugin):
 
+    def __init__(self, parentObj):
+        super(TacticalPositionsPlugin, self).__init__(parentObj)
+        self._callbackID = None
+        self._attempts = 0
+
     def start(self):
         super(TacticalPositionsPlugin, self).start()
+        self._tryShow()
+
+    def stop(self):
+        if self._callbackID is not None:
+            BigWorld.cancelCallback(self._callbackID)
+            self._callbackID = None
+        super(TacticalPositionsPlugin, self).stop()
+
+    def _tryShow(self):
+        self._callbackID = None
         try:
-            self._showTactic()
+            if not self._showTactic():
+                return
         except Exception:
             logger.exception('cannot show positions')
+            return
+        # миникарта создаётся ещё на экране загрузки, когда машина игрока может быть неизвестна
+        self._attempts += 1
+        if self._attempts < RETRY_ATTEMPTS:
+            self._callbackID = BigWorld.callback(RETRY_DELAY, self._tryShow)
+        else:
+            logger.warning('player vehicle is still unknown, giving up')
 
     def _showTactic(self):
+        """Возвращает True, если данных об игроке ещё нет и нужно попробовать позже."""
+        descriptor = avatar_getter.getVehicleTypeDescriptor()
+        team = avatar_getter.getPlayerTeam()
+        if descriptor is None or not team:
+            return True
         geometry = self._arenaVisitor.type.getGeometryName()
-        team = self._arenaDP.getNumberOfTeam()
-        vehicle = self._arenaDP.getVehicleInfo().vehicleType
-        tactic = getIndex().find(geometry, team, vehicle.classTag)
+        vehicleClass = getVehicleClassFromVehicleType(descriptor.type)
+        tactic = getIndex().find(geometry, team, vehicleClass)
+        logger.info('battle on %s, team %s, %s: %s', geometry, team, vehicleClass,
+                    '%d positions' % len(tactic.points) if tactic else 'no tactic')
         if tactic is None:
-            logger.debug('no tactic for %s, team %s, %s', geometry, team, vehicle.classTag)
-            return
+            return False
 
         bottomLeft, upperRight = self._arenaVisitor.type.getBoundingBox()
         bottomLeft, upperRight = (bottomLeft[0], bottomLeft[1]), (upperRight[0], upperRight[1])
@@ -88,9 +119,12 @@ class TacticalPositionsPlugin(EntriesPlugin):
             x, z = to_world(point, bottomLeft, upperRight)
             matrix = minimap_utils.makePositionAndScaleMatrix(Math.Vector3(x, 0, z),
                                                               (MARKER_SCALE, 1.0, MARKER_SCALE))
-            self._addEntryEx(point.id, SYMBOL, CONTAINER, matrix=matrix, active=True,
-                             transformProps=settings.TRANSFORM_FLAG.FULL)
+            entry = self._addEntryEx(point.id, SYMBOL, CONTAINER, matrix=matrix, active=True,
+                                     transformProps=settings.TRANSFORM_FLAG.FULL)
+            if entry is None:
+                logger.warning('minimap refused entry %s', point.id)
         BigWorld.callback(CHAT_DELAY, lambda: self._printToChat(tactic))
+        return False
 
     def _printToChat(self, tactic):
         if self._arenaDP is None:  # бой уже закончился
@@ -102,8 +136,11 @@ class TacticalPositionsPlugin(EntriesPlugin):
                  u'Позиции на миникарте: %s' % names]
         lines.extend(clean_description(_text(tactic.geometry, prefix + 'descr')))
         chat = MessengerEntry.g_instance.gui
-        for line in lines:
-            chat.addClientMessage(line)
+        try:
+            for line in lines:
+                chat.addClientMessage(line)
+        except Exception:
+            logger.exception('cannot print tactic to chat')
 
 
 def install():
@@ -115,6 +152,7 @@ def install():
         return setup
 
     MinimapComponent._setupPlugins = _setupPlugins
+    logger.info('minimap plugin installed')
     return original
 
 
